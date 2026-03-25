@@ -13,7 +13,6 @@ env:
   AWS_REGION: us-east-1
   ECS_CLUSTER: ecs-cluster-dev
   ECS_TASK_DEFINITION: task-definition.json
-  DOMAIN_NAME: devsandbox.space
 
 # REQUIRED FOR OIDC
 permissions:
