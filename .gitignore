@@ -6,3 +6,4 @@ terraform.*
 task-defini*.json
 .github/**/**
 path-based/**
+task-definition*.sh

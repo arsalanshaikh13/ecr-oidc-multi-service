@@ -337,6 +337,19 @@ resource "aws_route53_record" "root_alias" {
     zone_id                = aws_lb.app_alb.zone_id
     evaluate_target_health = true
   }
+}# 2. Subdomains (www, books, authors)
+resource "aws_route53_record" "subdomain_alias" {
+  for_each = toset(["www", "books", "authors"])
+  
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "${each.key}.${var.domain_name}"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.app_alb.dns_name
+    zone_id                = aws_lb.app_alb.zone_id
+    evaluate_target_health = true
+  }
 }
 
 #---------------------------------------------
@@ -528,6 +541,11 @@ resource "aws_ecs_task_definition" "app_task" {
       { name = "AUTHORS_SERVICE_URL", value = "https://authors.${var.domain_name}" }
     ]) : "[]"
   })
+  # lifecycle {
+  #   ignore_changes = [
+  #     container_definitions
+  #   ]
+  # }
 }
 #---------------------------------------------
 # 11. ECS Service
@@ -570,7 +588,7 @@ resource "aws_ecs_service" "app_service" {
 
   lifecycle {
     ignore_changes = [
-      # task_definition,
+      task_definition,
       desired_count
     ]
   }
