@@ -116,6 +116,7 @@ for SERVICE_NAME in "${SERVICES[@]}"; do
     --region "$REGION" \
     --force \
     --no-cli-pager > /dev/null 2>&1
+done
 
 # Step 3: Trigger Terraform
 echo "======================================================"
