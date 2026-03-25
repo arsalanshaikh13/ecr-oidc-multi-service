@@ -5,3 +5,4 @@
 terraform.*
 task-definition.json
 host-based/**
+.github/**/**
