@@ -106,10 +106,21 @@ else
   echo "   ✅ No running instances found."
 fi
 
+echo "4️⃣ Force deleting ECS services..."
+
+for SERVICE_NAME in "${SERVICES[@]}"; do
+  echo "   🗑️ Deleting $SERVICE_NAME..."
+  aws ecs delete-service \
+    --cluster "$CLUSTER_NAME" \
+    --service "$SERVICE_NAME" \
+    --region "$REGION" \
+    --force \
+    --no-cli-pager > /dev/null 2>&1
+
 # Step 3: Trigger Terraform
 echo "======================================================"
 echo " 🌪️  Infrastructure is clear. Triggering Terraform... "
 echo "======================================================"
 
 # We use the standard command so you still get the [yes/no] safety prompt
-terraform destroy -var-file=dev.tfvars -auto-approve
+terraform destroy -var-file=dev.tfvars -parallelism=20 -auto-approve -refresh=false
