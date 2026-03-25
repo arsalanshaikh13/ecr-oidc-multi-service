@@ -209,13 +209,7 @@ resource "aws_security_group" "app_task_sg" {
   description = "SG for ECS tasks"
   vpc_id      = aws_vpc.vpc.id
 
-  # ingress {
-  #   description = "http port access"
-  #   from_port   = 80
-  #   to_port     = 80
-  #   protocol    = "tcp"
-  #   cidr_blocks = ["0.0.0.0/0"]
-  # }
+  
   # ingress {
   #   description = "node port access"
   #   from_port                = 3200
