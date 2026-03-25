@@ -270,110 +270,8 @@ resource "aws_security_group" "app_task_sg" {
 # }
 
 
-# resource "aws_vpc_security_group_ingress_rule" "allow_http" {
-#   security_group_id = aws_security_group.app_task_sg.id
-#   cidr_ipv4         = "0.0.0.0/0"
-#   from_port         = 80
-#   ip_protocol       = "tcp"
-#   to_port           = 80
-# }
 
 
-# NEW: Node SG (For the underlying EC2 instances to talk to AWS endpoints)
-resource "aws_security_group" "ecs_node_sg" {
-  name        = "ecs-node-sg-${local.env_suffix}"
-  description = "SG for ECS EC2 nodes"
-  vpc_id      = aws_vpc.vpc.id
-  # ingress {
-  #   description = "node port access"
-  #   from_port   = 3200
-  #   to_port     = 3200
-  #   protocol    = "tcp"
-  #   cidr_blocks = ["0.0.0.0/0"]
-  # }
-  # ingress {
-  #   description = "node port access"
-  #   from_port   = 80
-  #   to_port     = 80
-  #   protocol    = "tcp"
-  #   cidr_blocks = ["0.0.0.0/0"]
-  # }
-
-# Dynamically creates ingress rules for 3200, 3300, and 3400
-  dynamic "ingress" {
-    for_each = local.services
-    content {
-      description     = "Access for ${ingress.key} from ALB"
-      from_port       = ingress.value.port
-      to_port         = ingress.value.port
-      protocol        = "tcp"
-      # Only allow traffic that comes through the Load Balancer
-      security_groups = [aws_security_group.alb_sg.id] 
-    }
-  }
-  # ingress {
-  #   description = "node port access"
-  #   from_port                = 32768
-  #   to_port                  = 65535
-  #   protocol                 = "tcp"
-  #   security_groups = [aws_security_group.alb_sg.id]
-  # }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}
-
-#---------------------------------------------
-# 6. EC2 Auto Scaling Group & Launch Template
-#---------------------------------------------
-# Dynamically fetch the latest Amazon Linux 2023 ECS-Optimized AMI
-data "aws_ssm_parameter" "ecs_optimized_ami" {
-  name = "/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id"
-}
-
-resource "aws_launch_template" "ecs_lt" {
-  name_prefix   = "ecs-template-${local.env_suffix}"
-  image_id      = data.aws_ssm_parameter.ecs_optimized_ami.value
-  # instance_type = "t3.medium"
-  instance_type = "c7i-flex.large"
-
-  iam_instance_profile {
-    name = aws_iam_instance_profile.ecs_node_profile.name
-  }
-
-  vpc_security_group_ids = [aws_security_group.ecs_node_sg.id]
-
-  user_data = base64encode(<<-EOF
-    #!/bin/bash
-    echo ECS_CLUSTER=${aws_ecs_cluster.app_cluster.name} >> /etc/ecs/ecs.config
-  EOF
-  )
-}
-
-resource "aws_autoscaling_group" "ecs_asg" {
-  name                = "ecs-asg-${local.env_suffix}"
-  # vpc_zone_identifier = [aws_subnet.pub_sub_1a.id, aws_subnet.pub_sub_2b.id]
-  vpc_zone_identifier = [aws_subnet.pri_sub_3a.id, aws_subnet.pri_sub_4b.id]
-  
-  min_size         = 1
-  max_size         = 3
-  desired_capacity = 1
-
-  launch_template {
-    id      = aws_launch_template.ecs_lt.id
-    version = "$Latest"
-  }
-
-  tag {
-    key                 = "AmazonECSManaged"
-    value               = true
-    propagate_at_launch = true
-  }
-}
 
 #---------------------------------------------
 # 7. ECS Cluster & Capacity Provider
@@ -385,31 +283,6 @@ resource "aws_ecs_cluster" "app_cluster" {
     value = "enabled"
   }
   tags = local.common_tags
-}
-
-resource "aws_ecs_capacity_provider" "ec2_provider" {
-  name = "ec2-capacity-provider-${local.env_suffix}"
-
-  auto_scaling_group_provider {
-    auto_scaling_group_arn         = aws_autoscaling_group.ecs_asg.arn
-    managed_termination_protection = "DISABLED"
-
-    managed_scaling {
-      status          = "ENABLED"
-      target_capacity = 100 
-    }
-  }
-}
-
-resource "aws_ecs_cluster_capacity_providers" "cluster_attach" {
-  cluster_name = aws_ecs_cluster.app_cluster.name
-  capacity_providers = [aws_ecs_capacity_provider.ec2_provider.name]
-
-  default_capacity_provider_strategy {
-    base              = 1
-    weight            = 100
-    capacity_provider = aws_ecs_capacity_provider.ec2_provider.name
-  }
 }
 
 #---------------------------------------------
@@ -670,7 +543,8 @@ resource "aws_ecs_task_definition" "app_task" {
   for_each         = local.services
   family                   = "lirw-task-${each.key}"
   network_mode             = "awsvpc"
-  requires_compatibilities = ["EC2"]
+  # requires_compatibilities = ["EC2"]
+  requires_compatibilities = ["FARGATE"]
   cpu                      = var.app_cpu
   memory                   = var.app_memory
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
@@ -695,55 +569,6 @@ resource "aws_ecs_task_definition" "app_task" {
 #---------------------------------------------
 # 11. ECS Service
 #---------------------------------------------
-# resource "aws_ecs_service" "app_service" {
-#   name             = "lirw-service-${local.env_suffix}"
-#   cluster          = aws_ecs_cluster.app_cluster.id
-#   task_definition  = aws_ecs_task_definition.app_task.arn
-#   desired_count    = var.desired_count
-
-#   # ADD THIS: Force Terraform to give up faster if AWS hangs
-#   timeouts {
-#     delete = "5m" 
-#   }
-#   # Removed launch_type = "FARGATE", replaced with Capacity Provider Strategy
-#   capacity_provider_strategy {
-#     capacity_provider = aws_ecs_capacity_provider.ec2_provider.name
-#     weight            = 100
-#   }
-
-#   # this only works for awsvpc network mode not host network mode
-#   network_configuration {
-#     # subnets          = [aws_subnet.pub_sub_1a.id, aws_subnet.pub_sub_2b.id] 
-#     subnets          = [aws_subnet.pri_sub_3a.id, aws_subnet.pri_sub_4b.id] 
-#     security_groups  = [aws_security_group.app_task_sg.id]
-#     assign_public_ip = false 
-#     # assign_public_ip = true # it only works with fargate
-#   }
-
-#   # ADD THIS LINE: Give the container 60 seconds to boot before the ALB checks it
-#   health_check_grace_period_seconds = 60
-
-#   load_balancer {
-#     target_group_arn = aws_lb_target_group.app_tg.arn
-#     container_name   = "lirw"
-#     container_port   = 3200
-#   }
-
-#   deployment_minimum_healthy_percent = 100 
-#   deployment_maximum_percent         = 200
-
-#   lifecycle {
-#     ignore_changes = [
-#       task_definition,
-#       desired_count
-#     ]
-#   }
-
-#   depends_on = [
-#     aws_lb_listener.app_listener_https_secure,
-#     aws_ecs_cluster_capacity_providers.cluster_attach # Ensure CP is attached before Service uses it
-#   ]
-# }
 
 
 resource "aws_ecs_service" "app_service" {
@@ -753,20 +578,19 @@ resource "aws_ecs_service" "app_service" {
   # References the specific task definition created for this service
   task_definition  = aws_ecs_task_definition.app_task[each.key].arn
   desired_count    = var.desired_count
-
+  launch_type      = "FARGATE" 
+  platform_version = "LATEST"
   timeouts {
     delete = "5m" 
   }
 
-  capacity_provider_strategy {
-    capacity_provider = aws_ecs_capacity_provider.ec2_provider.name
-    weight            = 100
-  }
 
   network_configuration {
-    subnets          = [aws_subnet.pri_sub_3a.id, aws_subnet.pri_sub_4b.id] 
+    # subnets          = [aws_subnet.pri_sub_3a.id, aws_subnet.pri_sub_4b.id] 
+    subnets          = [aws_subnet.pub_sub_1a.id, aws_subnet.pub_sub_2b.id] 
     security_groups  = [aws_security_group.app_task_sg.id]
-    assign_public_ip = false 
+    # assign_public_ip = false 
+    assign_public_ip = true
   }
 
   health_check_grace_period_seconds = 60
@@ -789,64 +613,6 @@ resource "aws_ecs_service" "app_service" {
   }
 
   depends_on = [
-    aws_lb_listener.app_listener_https_secure,
-    aws_ecs_cluster_capacity_providers.cluster_attach
+    aws_lb_listener.app_listener_https_secure
   ]
-}
-#---------------------------------------------
-# 12. Application Auto Scaling (Task Level)
-#---------------------------------------------
-# resource "aws_appautoscaling_target" "ecs_target" {
-#   max_capacity       = 10
-#   min_capacity       = 2
-#   resource_id        = "service/${aws_ecs_cluster.app_cluster.name}/${aws_ecs_service.app_service.name}"
-#   scalable_dimension = "ecs:service:DesiredCount"
-#   service_namespace  = "ecs"
-# }
-
-# # Auto-scale tasks based on CPU Utilization
-# resource "aws_appautoscaling_policy" "ecs_policy_cpu" {
-#   name               = "lirw-cpu-autoscaling-${local.env_suffix}"
-#   policy_type        = "TargetTrackingScaling"
-#   resource_id        = aws_appautoscaling_target.ecs_target.resource_id
-#   scalable_dimension = aws_appautoscaling_target.ecs_target.scalable_dimension
-#   service_namespace  = aws_appautoscaling_target.ecs_target.service_namespace
-
-#   target_tracking_scaling_policy_configuration {
-#     predefined_metric_specification {
-#       predefined_metric_type = "ECSServiceAverageCPUUtilization"
-#     }
-#     target_value       = 75.0
-#     scale_in_cooldown  = 300
-#     scale_out_cooldown = 60
-#   }
-# }
-# 12a. Scaling Targets
-resource "aws_appautoscaling_target" "ecs_target" {
-  for_each           = local.services
-  max_capacity       = 10
-  min_capacity       = 2
-  # Formatted as: service/cluster-name/service-name
-  resource_id        = "service/${aws_ecs_cluster.app_cluster.name}/${aws_ecs_service.app_service[each.key].name}"
-  scalable_dimension = "ecs:service:DesiredCount"
-  service_namespace  = "ecs"
-}
-
-# 12b. CPU Auto-scaling Policies
-resource "aws_appautoscaling_policy" "ecs_policy_cpu" {
-  for_each           = local.services
-  name               = "${each.key}-cpu-autoscaling-${local.env_suffix}"
-  policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.ecs_target[each.key].resource_id
-  scalable_dimension = aws_appautoscaling_target.ecs_target[each.key].scalable_dimension
-  service_namespace  = aws_appautoscaling_target.ecs_target[each.key].service_namespace
-
-  target_tracking_scaling_policy_configuration {
-    predefined_metric_specification {
-      predefined_metric_type = "ECSServiceAverageCPUUtilization"
-    }
-    target_value       = 75.0
-    scale_in_cooldown  = 300
-    scale_out_cooldown = 60
-  }
 }
