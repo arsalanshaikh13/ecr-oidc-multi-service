@@ -5,7 +5,7 @@ on:
     branches:
       - fargate
     paths:
-      - "path-based/**"
+      - "host-based/**"
       - ".github/workflows/**" # Triggers if you update this pipeline file
   workflow_dispatch: # Allows you to trigger deployments/secret rotations manually via the GitHub UI
 
@@ -13,7 +13,6 @@ env:
   AWS_REGION: us-east-1
   ECS_CLUSTER: ecs-cluster-dev
   ECS_TASK_DEFINITION: task-definition.json
-  DOMAIN_NAME: devsandbox.space
 
 # REQUIRED FOR OIDC
 permissions:
@@ -35,7 +34,7 @@ jobs:
             env: "[]"
           - service: "dashboard"
             port: 3200
-            env: '[{"name": "BOOKS_SERVICE_URL", "value": "https://${{ vars.DOMAIN_NAME }}/books"}, {"name": "AUTHORS_SERVICE_URL", "value": "https://${{ vars.DOMAIN_NAME }}/authors"}]'
+            env: '[{"name": "BOOKS_SERVICE_URL", "value": "https://books.${{ vars.DOMAIN_NAME }}"}, {"name": "AUTHORS_SERVICE_URL", "value": "https://authors.${{ vars.DOMAIN_NAME }}"}]'
 
     steps:
       - name: Checkout repository
@@ -61,7 +60,7 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
           REPO_NAME: ${{ matrix.service }}-repo-${{vars.ENV_VAR}}
         run: |
-          cd path-based
+          cd host-based
           # Assumes Dockerfiles are in folders named 'authors', 'books', 'dashboard'
           docker build -t $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG ./${{ matrix.service }}
           docker push $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG

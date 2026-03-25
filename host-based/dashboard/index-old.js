@@ -20,8 +20,8 @@ app.get("/health", (req, res) => {
 // Config endpoint
 app.get('/config', (req, res) => {
   res.status(200).json({
-    BOOKS_SERVICE_URL: process.env.BOOKS_SERVICE_URL || 'http://localhost:3400/books',
-    AUTHORS_SERVICE_URL: process.env.AUTHORS_SERVICE_URL || 'http://localhost:3300/authors'
+    BOOKS_SERVICE_URL: process.env.BOOKS_SERVICE_URL || 'http://localhost:3400',
+    AUTHORS_SERVICE_URL: process.env.AUTHORS_SERVICE_URL || 'http://localhost:3300'
   });
 });
 

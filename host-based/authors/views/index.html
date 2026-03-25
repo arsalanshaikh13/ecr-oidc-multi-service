@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Authors App</title>
     <link rel="icon" type="image/x-icon" href="favicon.ico" />
-    <link rel="stylesheet" href="/authors-style.css" />
+    <link rel="stylesheet" href="/style.css" />
   </head>
 
   <body>
@@ -30,7 +30,7 @@
     </div>
 
     <script>
-      // Utility function to prevent XSS when using innerHTML
+      // Utility function to prevent XSS
       function escapeHTML(str) {
         if (!str) return "";
         return str
@@ -52,7 +52,8 @@
           errorUI.style.display = "none";
           table.style.display = "none";
 
-          const res = await fetch("/authors/api");
+          // Fetching from the root API path for host-based routing
+          const res = await fetch("/api");
           if (!res.ok) throw new Error("Network response was not ok");
           const { authors } = await res.json();
 
@@ -62,12 +63,12 @@
           authors.forEach((author) => {
             const row = document.createElement("tr");
 
-            // Safely inject data using template literals and escapeHTML
+            // Safely inject data using template literals
             row.innerHTML = `
-              <td>${escapeHTML(author.name)}</td>
-              <td style="min-width: 120px;">${escapeHTML(author.birthDate || author.dob || "Unknown")}</td>
-              <td>${escapeHTML(author.bio)}</td>
-            `;
+            <td>${escapeHTML(author.name)}</td>
+            <td style="min-width: 120px;">${escapeHTML(author.birthDate || author.dob || "Unknown")}</td>
+            <td>${escapeHTML(author.bio)}</td>
+          `;
 
             tbody.appendChild(row);
           });
