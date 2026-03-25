@@ -40,8 +40,9 @@
         <button id="closeDrawer">Close</button>
       </div>
     </div>
+
     <script>
-      // Utility function to prevent XSS when injecting text
+      // Security: Escape HTML to prevent Cross-Site Scripting (XSS)
       function escapeHTML(str) {
         if (!str) return "";
         return str
@@ -65,35 +66,35 @@
 
           // Fetch config from server
           const configRes = await fetch("/config");
-          if (!configRes.ok) throw new Error("Failed to load configuration");
+          if (!configRes.ok) throw new Error("Failed to fetch config");
           const config = await configRes.json();
 
           const { BOOKS_SERVICE_URL, AUTHORS_SERVICE_URL } = config;
 
-          // Fetch books and authors IN PARALLEL for better performance
+          // Fetch data IN PARALLEL for maximum performance
           const [booksRes, authorsRes] = await Promise.all([
-            fetch(`${BOOKS_SERVICE_URL}/api`),
+            fetch(`${BOOKS_SERVICE_URL}/api`), // Ensure Books/Authors APIs have CORS enabled!
             fetch(`${AUTHORS_SERVICE_URL}/api`),
           ]);
 
           if (!booksRes.ok || !authorsRes.ok)
-            throw new Error("Failed to fetch data from microservices");
+            throw new Error("Failed to fetch microservice data");
 
           const { books } = await booksRes.json();
           const { authors } = await authorsRes.json();
 
-          // Create a map of authors for quick lookup
+          // Create a map of authors for quick lookup O(1)
           const authorsMap = new Map();
           authors.forEach((author) => authorsMap.set(author.id, author));
 
           const tbody = document.getElementById("dashboardTableBody");
-          tbody.innerHTML = ""; // Clear existing rows if any
+          tbody.innerHTML = ""; // Clear existing rows
 
           books.forEach((book) => {
             const author = authorsMap.get(book.authorId);
             const row = document.createElement("tr");
 
-            // Using textContent naturally prevents XSS
+            // Safely inject data
             row.innerHTML = `
             <td>${escapeHTML(book.title)}</td>
             <td>${escapeHTML(author ? author.name : "Unknown")}</td>
@@ -102,19 +103,18 @@
             <td><button class="action-button">View</button></td>
           `;
 
-            // Attach event listener
+            // Handle Drawer action
             const actionButton = row.querySelector(".action-button");
             actionButton.addEventListener("click", () => {
               const drawer = document.getElementById("drawer");
               const drawerContent = document.querySelector(".drawer-body");
 
-              // Safely inject data using our escape function
               drawerContent.innerHTML = `
               <h2>📘 ${escapeHTML(book.title)}</h2>
               <p><strong>Author:</strong> ${escapeHTML(author ? author.name : "Unknown")}</p>
               <p><strong>Published Date:</strong> ${escapeHTML(book.publishedDate)}</p>
               <p><strong>Pages:</strong> ${escapeHTML(book.pages)}</p>
-              <p><strong>Book Description:</strong> ${escapeHTML(book.description || "N/A")}</p>
+              <p><strong>Book Description:</strong> ${escapeHTML(book.description)}</p>
               <p><strong>Author Bio:</strong> ${escapeHTML(author ? author.bio : "N/A")}</p>
               <p><strong>Author Birthday:</strong> ${escapeHTML(author ? author.birthDate : "N/A")}</p>
             `;
@@ -135,7 +135,6 @@
 
       window.onload = fetchData;
 
-      // Consolidate drawer closing logic
       const closeDrawer = () =>
         document.getElementById("drawer").classList.remove("open");
       document

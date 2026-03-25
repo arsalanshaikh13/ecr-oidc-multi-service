@@ -11,40 +11,44 @@ const PORT = process.env.PORT || 3300;
 // --- Middlewares ---
 // Security headers
 app.use(helmet({ contentSecurityPolicy: false }));
-// HTTP request logging (essential for CloudWatch logs)
+// Request logging (essential for tracking ALB traffic in CloudWatch)
 app.use(morgan("combined"));
-// Replaced your manual CORS setup with the standard, robust npm package
-app.use(cors());
+
+// Production CORS Configuration
+// In ECS, you can set the DASHBOARD_URL environment variable (e.g., https://dashboard.yourdomain.com)
+// to lock down this API so ONLY your dashboard can read from it.
+const corsOptions = {
+  origin: process.env.DASHBOARD_URL || "*",
+  methods: ["GET", "OPTIONS"],
+  allowedHeaders: ["Origin", "X-Requested-With", "Content-Type", "Accept"],
+};
+app.use(cors(corsOptions));
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 // --- Routes ---
-// Serve the main HTML file
-app.get("/authors", (req, res) => {
+// Serve the main HTML file at the root of the subdomain
+app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "views", "index.html"));
 });
 
-// Health check endpoint (Configure your ALB Target Group to ping this)
+// Health check endpoint (Point your ALB target group health check to /health)
 app.get("/health", (req, res) => {
-  res
-    .status(200)
-    .json({
-      status: "ok",
-      message: "Authors service is healthy",
-      uptime: process.uptime(),
-    });
+  res.status(200).json({
+    status: "ok",
+    message: "Authors service is healthy",
+    uptime: process.uptime(),
+  });
 });
 
-// Authors endpoint
-app.get("/authors/api", async (req, res) => {
+// Authors API endpoint
+app.get("/api", async (req, res) => {
   try {
-    // Simulated delay or actual DB call could go here in the future
     res.json({
       authors: data.authors,
     });
   } catch (err) {
-    // Fixed the copy-paste bug here (was "Books fetch error")
     console.error("Authors fetch error:", err);
     res.status(500).json({ error: "Unable to fetch authors" });
   }
@@ -61,7 +65,7 @@ const server = app.listen(PORT, () => {
   console.log(`Authors service is running on port ${PORT}`);
 });
 
-// --- Graceful Shutdown (Critical for ECS Task Termination) ---
+// --- Graceful Shutdown (Critical for ECS deployments & scaling) ---
 process.on("SIGTERM", () => {
   console.info(
     "SIGTERM signal received: Closing Authors HTTP server to drain inflight requests.",

@@ -11,7 +11,7 @@ workflow:
     - if: '$CI_PIPELINE_SOURCE == "web"' # Manual trigger
     - if: '$CI_COMMIT_BRANCH == "gitlab-fargate"'
       changes:
-        - "path-based/**/*"
+        - "host-based/**/*"
         - ".gitlab-ci.yml"
 
 variables:
@@ -73,7 +73,7 @@ build_image:
         aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
         
         IMAGE_TAG="${CI_COMMIT_SHA}"
-        cd path-based
+        cd host-based
         docker build -t $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG ./${SERVICE}
         docker push $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG
         

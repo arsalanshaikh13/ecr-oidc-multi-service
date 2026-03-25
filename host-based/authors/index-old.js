@@ -3,7 +3,8 @@ const path = require('path');
 const data = require('./data');
 
 const app = express();
-const PORT = 3400;
+const PORT = 3300;
+
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -22,7 +23,7 @@ app.use((req, res, next) => {
 });
 
 // Serve the main HTML file
-app.get('/books', (req, res) => {
+app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'index.html'));
 });
 
@@ -31,19 +32,19 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", message: "Service is healthy", uptime: process.uptime() });
 });
 
-// Books endpoint
-app.get("/books/api", async (req, res) => {
+// Authors endpoint
+app.get("/api", async (req, res) => {
   try {
     res.json({
-      books: data.books
+      authors: data.authors
     });
 
   } catch (err) {
-    console.error("Books fetch error:", err);
-    res.status(500).json({ error: "Unable to fetch books" });
+    console.error("Authors fetch error:", err);
+    res.status(500).json({ error: "Unable to fetch authors" });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}/books`);
+  console.log(`Server is running on http://localhost:${PORT}`);
 });

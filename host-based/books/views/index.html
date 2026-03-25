@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Books App</title>
     <link rel="icon" type="image/x-icon" href="favicon.ico" />
-    <link rel="stylesheet" href="/books-style.css" />
+    <link rel="stylesheet" href="/style.css" />
   </head>
 
   <body>
@@ -31,7 +31,7 @@
     </div>
 
     <script>
-      // Utility function to prevent XSS
+      // Utility function to prevent XSS vulnerabilities
       function escapeHTML(str) {
         if (!str) return "";
         return str
@@ -53,7 +53,7 @@
           errorUI.style.display = "none";
           table.style.display = "none";
 
-          const res = await fetch("/books/api");
+          const res = await fetch("/api");
           if (!res.ok) throw new Error("Network response was not ok");
           const { books } = await res.json();
 
@@ -65,11 +65,11 @@
 
             // Safely inject data using template literals
             row.innerHTML = `
-              <td>${escapeHTML(book.title)}</td>
-              <td style="min-width: 120px;">${escapeHTML(book.publishedDate)}</td>
-              <td>${escapeHTML(book.pages)}</td>
-              <td>${escapeHTML(book.description)}</td>
-            `;
+            <td>${escapeHTML(book.title)}</td>
+            <td style="min-width: 120px;">${escapeHTML(book.publishedDate)}</td>
+            <td>${escapeHTML(book.pages)}</td>
+            <td>${escapeHTML(book.description)}</td>
+          `;
 
             tbody.appendChild(row);
           });

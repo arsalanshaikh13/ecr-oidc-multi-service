@@ -9,33 +9,42 @@ const app = express();
 const PORT = process.env.PORT || 3400;
 
 // --- Middlewares ---
-// Security headers to protect against common web vulnerabilities
+// Security headers
 app.use(helmet({ contentSecurityPolicy: false }));
-// Request logging for observability (routes to CloudWatch in ECS)
+// Request logging for AWS CloudWatch
 app.use(morgan("combined"));
-// Standardized CORS implementation
-app.use(cors());
+
+// Production CORS Configuration
+// Restrict access so only your Dashboard application can make API requests
+const corsOptions = {
+  origin: process.env.DASHBOARD_URL || "*",
+  methods: ["GET", "OPTIONS"],
+  allowedHeaders: ["Origin", "X-Requested-With", "Content-Type", "Accept"],
+};
+app.use(cors(corsOptions));
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 // --- Routes ---
-// Serve the main HTML file
-app.get("/books", (req, res) => {
+// Serve the main HTML file at the root path
+app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "views", "index.html"));
 });
 
-// Health check endpoint (Essential for ALB Target Groups)
+// Health check endpoint (Essential for the ALB Target Group)
 app.get("/health", (req, res) => {
-  res.status(200).json({
-    status: "ok",
-    message: "Books service is healthy",
-    uptime: process.uptime(),
-  });
+  res
+    .status(200)
+    .json({
+      status: "ok",
+      message: "Books service is healthy",
+      uptime: process.uptime(),
+    });
 });
 
 // Books API endpoint
-app.get("/books/api", async (req, res) => {
+app.get("/api", async (req, res) => {
   try {
     res.json({
       books: data.books,
@@ -57,7 +66,7 @@ const server = app.listen(PORT, () => {
   console.log(`Books service is running on port ${PORT}`);
 });
 
-// --- Graceful Shutdown (Critical for ECS Task Cycling) ---
+// --- Graceful Shutdown (Crucial for ECS task lifecycle) ---
 process.on("SIGTERM", () => {
   console.info(
     "SIGTERM signal received: Closing Books HTTP server to drain inflight requests.",
