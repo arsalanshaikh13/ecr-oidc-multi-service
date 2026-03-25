@@ -3,35 +3,63 @@
 # ==========================================================
 # Configuration: Update these to match your environment
 # ==========================================================
-
 CLUSTER_NAME="ecs-cluster-dev"
-# Define your services as an array
-SERVICES=("authors-service-dev" "books-service-dev" "dashboard-service-dev")
-ASG_NAME="ecs-asg-dev"
 REGION="us-east-1"
+
+# Define the arrays for your multiple services and target groups
+TARGET_GROUPS=("books-tg-dev" "authors-tg-dev" "dashboard-tg-dev")
+SERVICES=("books-service-dev" "authors-service-dev" "dashboard-service-dev")
 
 echo "======================================================"
 echo " 🛑 Initiating Safe ECS Teardown Sequence..."
 echo "======================================================"
 
-# Step 1: Tell AWS to drain the tasks
-echo "1️⃣ Scaling services down to 0 tasks..."
+# Step 1: Remove the Load Balancer's safety net
+echo "1️⃣ Modifying Target Groups to drop connections instantly..."
+
+for TG_NAME in "${TARGET_GROUPS[@]}"; do
+  echo "   🔄 Checking Target Group: $TG_NAME..."
+  
+  # Retrieve the exact ARN of the Target Group
+  TG_ARN=$(aws elbv2 describe-target-groups \
+    --names "$TG_NAME" \
+    --region "$REGION" \
+    --query 'TargetGroups[0].TargetGroupArn' \
+    --output text 2>/dev/null)
+
+  if [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
+    # Force the draining delay to 0 seconds
+    aws elbv2 modify-target-group-attributes \
+      --target-group-arn "$TG_ARN" \
+      --attributes Key=deregistration_delay.timeout_seconds,Value=0 \
+      --region "$REGION" > /dev/null
+    echo "      ✅ Deregistration delay set to 0. Safety nets removed."
+  else
+    echo "      ⚠️ Target Group not found (It may already be deleted). Proceeding..."
+  fi
+done
+
+# Step 2: Tell AWS to drain the tasks
+echo ""
+echo "2️⃣ Scaling all services down to 0 tasks..."
+
 for SERVICE_NAME in "${SERVICES[@]}"; do
   echo "   📉 Scaling $SERVICE_NAME..."
   aws ecs update-service \
     --cluster "$CLUSTER_NAME" \
     --service "$SERVICE_NAME" \
     --desired-count 0 \
-    --region "$REGION" > /dev/null
-
+    --region "$REGION" > /dev/null 2>&1
+    
   if [ $? -ne 0 ]; then
-    echo "   ❌ Failed to update $SERVICE_NAME. Please check your AWS credentials and cluster name."
-    exit 1
+    echo "      ⚠️ Failed to update $SERVICE_NAME. (It may not exist). Proceeding..."
   fi
 done
 
-# Step 2: Actively monitor the shutdown process
-echo "2️⃣ Waiting for all running tasks to terminate cleanly..."
+# Step 3: Actively monitor the shutdown process
+echo ""
+echo "3️⃣ Waiting for all running tasks to terminate cleanly..."
+
 while true; do
   ALL_SERVICES_DOWN=true
 
@@ -42,7 +70,12 @@ while true; do
       --services "$SERVICE_NAME" \
       --region "$REGION" \
       --query 'services[0].runningCount' \
-      --output text)
+      --output text 2>/dev/null)
+
+    # Check if the query returned a valid number (handles "service not found" edge cases)
+    if [[ ! "$RUNNING_TASKS" =~ ^[0-9]+$ ]]; then
+      RUNNING_TASKS=0 # Treat missing services as having 0 tasks
+    fi
 
     if [ "$RUNNING_TASKS" -gt 0 ]; then
       echo "   ⏳ $SERVICE_NAME still has $RUNNING_TASKS task(s) running..."
@@ -52,7 +85,7 @@ while true; do
 
   # If all services reported 0 tasks, break the loop
   if [ "$ALL_SERVICES_DOWN" = true ]; then
-    echo "✅ All ECS services have successfully scaled down to 0!"
+    echo "   ✅ All tasks across all services have been successfully terminated."
     break
   fi
 
@@ -60,56 +93,28 @@ while true; do
   sleep 10
 done
 
+# Step 4: Force delete the services
+echo ""
+echo "4️⃣ Force deleting ECS services..."
 
-# Step 3: Terminate the EC2 Instances
-echo "3️⃣ Scaling Auto Scaling Group ($ASG_NAME) to 0 instances..."
-aws autoscaling update-auto-scaling-group \
-  --auto-scaling-group-name "$ASG_NAME" \
-  --min-size 0 \
-  --max-size 0 \
-  --desired-capacity 0 \
-  --region "$REGION" > /dev/null
-
-if [ $? -ne 0 ]; then
-  echo "⚠️ Failed to update ASG. It may have already been deleted."
-else
-  echo "✅ EC2 instances are terminating..."
-  # Give AWS a few seconds to register the termination state before Terraform hits the API
-  sleep 10
-fi
-
-# Extract the raw Instance IDs attached to the ASG
-INSTANCE_IDS=$(aws autoscaling describe-auto-scaling-groups \
-  --auto-scaling-group-names "$ASG_NAME" \
-  --region "$REGION" \
-  --query 'AutoScalingGroups[0].Instances[*].InstanceId' \
-  --output text)
-
-if [ -n "$INSTANCE_IDS" ] && [ "$INSTANCE_IDS" != "None" ]; then
-  echo "   🔥 Target(s) acquired: $INSTANCE_IDS"
-  echo "   ☠️  Sending termination signal..."
-  
-  # Forcefully terminate the instances via EC2 API
-  aws ec2 terminate-instances \
-    --instance-ids $INSTANCE_IDS \
-    --region "$REGION" > /dev/null
+for SERVICE_NAME in "${SERVICES[@]}"; do
+  echo "   🗑️ Deleting $SERVICE_NAME..."
+  aws ecs delete-service \
+    --cluster "$CLUSTER_NAME" \
+    --service "$SERVICE_NAME" \
+    --region "$REGION" \
+    --force \
+    --no-cli-pager > /dev/null 2>&1
     
-  echo "   ⏳ Waiting for AWS to confirm termination (usually takes ~30 seconds)..."
-  
-  # This command pauses the script until AWS confirms the instances are physically dead
-  aws ec2 wait instance-terminated \
-    --instance-ids $INSTANCE_IDS \
-    --region "$REGION"
-    
-  echo "   ✅ All EC2 instances successfully destroyed."
-else
-  echo "   ✅ No running instances found."
-fi
+  # Note: A second non-force delete is usually redundant if --force is used, 
+  # but left out here to keep the terminal output clean and prevent duplicate errors.
+done
 
-# Step 3: Trigger Terraform
+# Step 5: Trigger Terraform
+echo ""
 echo "======================================================"
 echo " 🌪️  Infrastructure is clear. Triggering Terraform... "
 echo "======================================================"
 
-# We use the standard command so you still get the [yes/no] safety prompt
-terraform destroy -var-file=dev.tfvars -auto-approve
+# Run Terraform Destroy
+terraform destroy -var-file=dev.tfvars -parallelism=20 -auto-approve
