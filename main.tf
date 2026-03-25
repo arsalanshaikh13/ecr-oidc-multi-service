@@ -443,17 +443,7 @@ resource "aws_acm_certificate_validation" "app_cert_wait" {
   validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
 }
 
-# resource "aws_route53_record" "app_alias" {
-#   zone_id = data.aws_route53_zone.main.zone_id
-#   name    = var.domain_name
-#   type    = "A"
 
-#   alias {
-#     name                   = aws_lb.app_alb.dns_name
-#     zone_id                = aws_lb.app_alb.zone_id
-#     evaluate_target_health = true
-#   }
-# }
 # 1. Root Domain (devsandbox.space)
 resource "aws_route53_record" "root_alias" {
   zone_id = data.aws_route53_zone.main.zone_id
@@ -467,20 +457,7 @@ resource "aws_route53_record" "root_alias" {
   }
 }
 
-# 2. Subdomains (www, books, authors)
-resource "aws_route53_record" "subdomain_alias" {
-  for_each = toset(["www", "books", "authors"])
-  
-  zone_id = data.aws_route53_zone.main.zone_id
-  name    = "${each.key}.${var.domain_name}"
-  type    = "A"
 
-  alias {
-    name                   = aws_lb.app_alb.dns_name
-    zone_id                = aws_lb.app_alb.zone_id
-    evaluate_target_health = true
-  }
-}
 #---------------------------------------------
 # 9. ALB + Target Group + Listener
 #---------------------------------------------
