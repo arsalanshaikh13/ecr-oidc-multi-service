@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - fargate
     paths:
       - "path-based/**"
       - ".github/workflows/**" # Triggers if you update this pipeline file
@@ -12,13 +11,8 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: lirw-dev
-  ECS_SERVICE: lirw-service-dev
   ECS_CLUSTER: ecs-cluster-dev
   ECS_TASK_DEFINITION: task-definition.json
-  CONTAINER_NAME: lirw
-  PROJECT_NAME: ECS-LIRW-ALB # MUST match the var.project_name used in your Terraform
-  DOMAIN_NAME: devsandbox.space
 
 # REQUIRED FOR OIDC
 permissions:
