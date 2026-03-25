@@ -3,7 +3,7 @@ name: Build, Push, and Deploy to ECS - Fargate
 on:
   push:
     branches:
-      - fargate
+      - path-based-fargate
     paths:
       - "path-based/**"
       - ".github/workflows/**" # Triggers if you update this pipeline file
