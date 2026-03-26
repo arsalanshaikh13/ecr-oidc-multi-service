@@ -7,6 +7,7 @@ echo "🧹 Step 4.5: Deregistering and Deleting Task Definitions..."
 # Define your task definition families exactly as they appear in AWS
 # TASK_FAMILIES=("lirw-task-authors" "lirw-task-books" "lirw-task-dashboard")
 # TASK_FAMILIES=("webapp-task-dev" )
+# for arsalan13IAM task definition
 TASK_FAMILIES=(
   "task-definition-backend"
   "task-definition-frontend"
