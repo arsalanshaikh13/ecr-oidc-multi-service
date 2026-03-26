@@ -1,0 +1,161 @@
+version: 2.1
+
+# ==========================================================
+# PIPELINE PARAMETERS (Manual Triggers)
+# ==========================================================
+parameters:
+  skip_build:
+    type: boolean
+    default: false
+    description: "Set to true to skip Docker Build & Push"
+
+# ==========================================================
+# REUSABLE COMMANDS (DRY)
+# ==========================================================
+commands:
+  setup_aws_oidc:
+    description: "Authenticates with AWS via OIDC"
+    steps:
+      - run:
+          name: "Assume AWS IAM Role via OIDC"
+          command: |
+            # CircleCI automatically provides the OIDC token in this variable
+            STS=($(aws sts assume-role-with-web-identity \
+              --role-arn arn:aws:iam::${ACCOUNT_ID}:role/CircleCI-ECS-DeployRole \
+              --role-session-name "CircleCIRunner-${CIRCLE_WORKFLOW_ID}" \
+              --web-identity-token $CIRCLE_OIDC_TOKEN_V2 \
+              --duration-seconds 3600 \
+              --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+              --output text))
+
+            # Write credentials to BASH_ENV so they persist across subsequent steps
+            echo "export AWS_ACCESS_KEY_ID=${STS[0]}" >> $BASH_ENV
+            echo "export AWS_SECRET_ACCESS_KEY=${STS[1]}" >> $BASH_ENV
+            echo "export AWS_SESSION_TOKEN=${STS[2]}" >> $BASH_ENV
+            echo "export AWS_DEFAULT_REGION=${AWS_REGION}" >> $BASH_ENV
+
+# ==========================================================
+# JOB DEFINITIONS
+# ==========================================================
+jobs:
+  build_image:
+    docker:
+      - image: cimg/aws:2024.03 # Pre-installed with AWS CLI, jq, and Docker
+    parameters:
+      service:
+        type: string
+    steps:
+      - checkout
+      - setup_remote_docker # Required in CircleCI to use Docker commands
+      - setup_aws_oidc
+      - run:
+          name: "Build & Push (or Fetch) Image for << parameters.service >>"
+          command: |
+            mkdir -p workspace
+            ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            REPO_NAME="<< parameters.service >>-repo-${ENV_VAR}"
+
+            if [ "<< pipeline.parameters.skip_build >>" != "true" ]; ]; then
+              echo "🏗️ Building Docker Image for << parameters.service >>..."
+              aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+              
+              IMAGE_TAG="${CIRCLE_SHA1}"
+              cd host-based
+              docker build -t $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG ./<< parameters.service >>
+              docker push $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG
+              
+              FINAL_IMAGE="$ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG"
+            else
+              echo "🔍 Fetching latest tag from ECR for << parameters.service >>..."
+              FETCHED_TAG=$(aws ecr describe-images --repository-name $REPO_NAME --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' --output text)
+              
+              if [ "$FETCHED_TAG" == "None" ] || [ -z "$FETCHED_TAG" ]; then exit 1; fi
+              
+              FINAL_IMAGE="$ECR_REGISTRY/$REPO_NAME:$FETCHED_TAG"
+            fi
+
+            # Save the result to a file in the workspace
+            echo "export FINAL_IMAGE=$FINAL_IMAGE" > workspace/<< parameters.service >>_env.sh
+      - persist_to_workspace:
+          root: workspace
+          paths:
+            - << parameters.service >>_env.sh
+
+  render_task_def:
+    docker:
+      - image: cimg/aws:2024.03
+    parameters:
+      service:
+        type: string
+    steps:
+      - attach_workspace:
+          at: workspace
+      - setup_aws_oidc
+      - run:
+          name: "Render Task Definition for << parameters.service >>"
+          command: |
+            # Load the FINAL_IMAGE variable from the previous job
+            source workspace/<< parameters.service >>_env.sh
+            echo "Updating task definition for << parameters.service >> using image $FINAL_IMAGE"
+
+            aws ecs describe-task-definition --task-definition lirw-task-<< parameters.service >> --query taskDefinition > task-def.json
+            jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' task-def.json > clean-task-def.json
+
+            jq --arg IMAGE "$FINAL_IMAGE" --arg CONTAINER "lirw-<< parameters.service >>" '(.containerDefinitions[] | select(.name == $CONTAINER)).image = $IMAGE' clean-task-def.json > workspace/<< parameters.service >>-ready-task-def.json
+      - persist_to_workspace:
+          root: workspace
+          paths:
+            - << parameters.service >>-ready-task-def.json
+
+  deploy_ecs:
+    docker:
+      - image: cimg/aws:2024.03
+    parameters:
+      service:
+        type: string
+    steps:
+      - attach_workspace:
+          at: workspace
+      - setup_aws_oidc
+      - run:
+          name: "Deploy << parameters.service >> to ECS"
+          command: |
+            echo "Registering new ECS task definition for << parameters.service >>..."
+            NEW_TASK_INFO=$(aws ecs register-task-definition --cli-input-json file://workspace/<< parameters.service >>-ready-task-def.json)
+            NEW_REVISION=$(echo $NEW_TASK_INFO | jq -r '.taskDefinition.revision')
+            echo "Created revision $NEW_REVISION"
+
+            echo "Deploying to ECS cluster..."
+            aws ecs update-service --cluster $ECS_CLUSTER --service << parameters.service >>-service-${ENV_VAR} --task-definition lirw-task-<< parameters.service >>:${NEW_REVISION}
+
+            echo "Waiting for service to stabilize..."
+            aws ecs wait services-stable --cluster $ECS_CLUSTER --services << parameters.service >>-service-${ENV_VAR}
+
+# ==========================================================
+# WORKFLOW ORCHESTRATION (The Matrix)
+# ==========================================================
+workflows:
+  deploy_pipeline:
+    jobs:
+      - build_image:
+          matrix:
+            parameters:
+              service: ["authors", "books", "dashboard"]
+          # Ensure context contains ACCOUNT_ID, ENV_VAR, AWS_REGION, ECS_CLUSTER
+          context: aws-ecs-context
+
+      - render_task_def:
+          requires:
+            - build_image
+          matrix:
+            parameters:
+              service: ["authors", "books", "dashboard"]
+          context: aws-ecs-context
+
+      - deploy_ecs:
+          requires:
+            - render_task_def
+          matrix:
+            parameters:
+              service: ["authors", "books", "dashboard"]
+          context: aws-ecs-context
