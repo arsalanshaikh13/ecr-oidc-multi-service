@@ -19,7 +19,7 @@ aliases:
       branches:
         only:
           - circleci
-          - circle-ci-fargate
+          - circleci-fargate
 executors:
   aws-docker:
     docker:
@@ -56,7 +56,7 @@ jobs:
               aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
               
               IMAGE_TAG="${CIRCLE_SHA1}"
-              cd host-based
+              cd path-based
               docker build -t $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG ./<< parameters.service >>
               docker push $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG
               
@@ -145,7 +145,7 @@ workflows:
           # 3. APPLY YAML ANCHOR
           <<: *branch_filter
           name: build_<< matrix.service >>
-          context: aws-ecs-context
+          context: context-ecr-oidc-multiple-service
           matrix:
             parameters:
               service: ["authors", "books", "dashboard"]
@@ -155,7 +155,7 @@ workflows:
           name: render_<< matrix.service >>
           requires:
             - build_image
-          context: aws-ecs-context
+          context: context-ecr-oidc-multiple-service
           matrix:
             parameters:
               service: ["authors", "books", "dashboard"]
@@ -165,7 +165,7 @@ workflows:
           name: deploy_<< matrix.service >>
           requires:
             - render_task_def
-          context: aws-ecs-context
+          context: context-ecr-oidc-multiple-service
           matrix:
             parameters:
               service: ["authors", "books", "dashboard"]
