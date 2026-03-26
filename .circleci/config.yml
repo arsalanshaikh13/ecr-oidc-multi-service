@@ -47,7 +47,9 @@ jobs:
       - run:
           name: "Build & Push (or Fetch) Image for << parameters.service >>"
           command: |
-            mkdir -p workspace
+            ROOT_DIR=$(pwd)
+            mkdir -p $ROOT_DIR/workspace
+
             ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
             REPO_NAME="<< parameters.service >>-repo-${ENV_VAR}"
 
@@ -70,7 +72,7 @@ jobs:
               FINAL_IMAGE="$ECR_REGISTRY/$REPO_NAME:$FETCHED_TAG"
             fi
 
-            echo "export FINAL_IMAGE=$FINAL_IMAGE" > workspace/<< parameters.service >>_env.sh
+            echo "export FINAL_IMAGE=$FINAL_IMAGE" > $ROOT_DIR/workspace/<< parameters.service >>_env.sh
 
       - persist_to_workspace:
           root: workspace
