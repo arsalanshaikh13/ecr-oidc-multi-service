@@ -89,7 +89,7 @@ jobs:
           at: workspace
 
       - aws-cli/setup:
-          role_arn: "arn:aws:iam::${ACCOUNT_ID}:role/CircleCI-ECS-DeployRole"
+          role_arn: "arn:aws:iam::${ACCOUNT_ID}:role/CircleCIActions-ECS-DeployRole"
           role_session_name: "CircleCIRunner-${CIRCLE_WORKFLOW_ID}"
           region: ${AWS_REGION}
 
@@ -119,7 +119,7 @@ jobs:
           at: workspace
 
       - aws-cli/setup:
-          role_arn: "arn:aws:iam::${ACCOUNT_ID}:role/CircleCI-ECS-DeployRole"
+          role_arn: "arn:aws:iam::${ACCOUNT_ID}:role/CircleCIActions-ECS-DeployRole"
           role_session_name: "CircleCIRunner-${CIRCLE_WORKFLOW_ID}"
           region: ${AWS_REGION}
 
