@@ -1,0 +1,173 @@
+version: 2.1
+
+# 1. IMPORT THE OFFICIAL AWS ORB
+orbs:
+  aws-cli: circleci/aws-cli@4.1.2
+
+parameters:
+  skip_build:
+    type: boolean
+    default: false
+    description: "Set to true to skip Docker Build & Push"
+
+# ==========================================================
+# REUSABLE ALIASES & EXECUTORS (DRY)
+# ==========================================================
+aliases:
+  - &branch_filter
+    filters:
+      branches:
+        only:
+          - circleci
+          - circleci-fargate
+executors:
+  aws-docker:
+    docker:
+      - image: cimg/aws:2024.03
+
+# ==========================================================
+# JOB DEFINITIONS
+# ==========================================================
+jobs:
+  build_image:
+    executor: aws-docker
+    parameters:
+      service:
+        type: string
+    steps:
+      - checkout
+      - setup_remote_docker
+
+      # 2. OFFICIAL ORB OIDC LOGIN
+      - aws-cli/setup:
+          role_arn: "arn:aws:iam::${ACCOUNT_ID}:role/CircleCIActions-ECS-DeployRole"
+          role_session_name: "CircleCIRunner-${CIRCLE_WORKFLOW_ID}"
+          region: ${AWS_REGION}
+
+      - run:
+          name: "Build & Push (or Fetch) Image for << parameters.service >>"
+          command: |
+            ROOT_DIR=$(pwd)
+            mkdir -p $ROOT_DIR/workspace
+
+            ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            REPO_NAME="<< parameters.service >>-repo-${ENV_VAR}"
+
+            if [ "<< pipeline.parameters.skip_build >>" != "true" ]; then
+              echo "🏗️ Building Docker Image for << parameters.service >>..."
+              aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+              
+              IMAGE_TAG="${CIRCLE_SHA1}"
+              cd path-based
+              docker build -t $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG ./<< parameters.service >>
+              docker push $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG
+              
+              FINAL_IMAGE="$ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG"
+            else
+              echo "🔍 Fetching latest tag from ECR for << parameters.service >>..."
+              FETCHED_TAG=$(aws ecr describe-images --repository-name $REPO_NAME --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' --output text)
+              
+              if [ -z "$FETCHED_TAG" ] || [ "$FETCHED_TAG" == "None" ]; then exit 1; fi
+              
+              FINAL_IMAGE="$ECR_REGISTRY/$REPO_NAME:$FETCHED_TAG"
+            fi
+
+            echo "export FINAL_IMAGE=$FINAL_IMAGE" > $ROOT_DIR/workspace/<< parameters.service >>_env.sh
+
+      - persist_to_workspace:
+          root: workspace
+          paths:
+            - << parameters.service >>_env.sh
+
+  render_task_def:
+    executor: aws-docker
+    parameters:
+      service:
+        type: string
+    steps:
+      - attach_workspace:
+          at: workspace
+
+      - aws-cli/setup:
+          role_arn: "arn:aws:iam::${ACCOUNT_ID}:role/CircleCIActions-ECS-DeployRole"
+          role_session_name: "CircleCIRunner-${CIRCLE_WORKFLOW_ID}"
+          region: ${AWS_REGION}
+
+      - run:
+          name: "Render Task Definition for << parameters.service >>"
+          command: |
+            source workspace/<< parameters.service >>_env.sh
+            echo "Updating task definition for << parameters.service >> using image $FINAL_IMAGE"
+
+            aws ecs describe-task-definition --task-definition lirw-task-<< parameters.service >> --query taskDefinition > task-def.json
+            jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' task-def.json > clean-task-def.json
+
+            jq --arg IMAGE "$FINAL_IMAGE" --arg CONTAINER "lirw-<< parameters.service >>" '(.containerDefinitions[] | select(.name == $CONTAINER)).image = $IMAGE' clean-task-def.json > workspace/<< parameters.service >>-ready-task-def.json
+
+      - persist_to_workspace:
+          root: workspace
+          paths:
+            - << parameters.service >>-ready-task-def.json
+
+  deploy_ecs:
+    executor: aws-docker
+    parameters:
+      service:
+        type: string
+    steps:
+      - attach_workspace:
+          at: workspace
+
+      - aws-cli/setup:
+          role_arn: "arn:aws:iam::${ACCOUNT_ID}:role/CircleCIActions-ECS-DeployRole"
+          role_session_name: "CircleCIRunner-${CIRCLE_WORKFLOW_ID}"
+          region: ${AWS_REGION}
+
+      - run:
+          name: "Deploy << parameters.service >> to ECS"
+          command: |
+            echo "Registering new ECS task definition for << parameters.service >>..."
+            NEW_TASK_INFO=$(aws ecs register-task-definition --cli-input-json file://workspace/<< parameters.service >>-ready-task-def.json)
+            NEW_REVISION=$(echo $NEW_TASK_INFO | jq -r '.taskDefinition.revision')
+            echo "Created revision $NEW_REVISION"
+
+            echo "Deploying to ECS cluster..."
+            aws ecs update-service --cluster $ECS_CLUSTER --service << parameters.service >>-service-${ENV_VAR} --task-definition lirw-task-<< parameters.service >>:${NEW_REVISION}
+
+            echo "Waiting for service to stabilize..."
+            aws ecs wait services-stable --cluster $ECS_CLUSTER --services << parameters.service >>-service-${ENV_VAR}
+
+# ==========================================================
+# WORKFLOW ORCHESTRATION
+# ==========================================================
+workflows:
+  deploy_pipeline:
+    jobs:
+      - build_image:
+          # 3. APPLY YAML ANCHOR
+          <<: *branch_filter
+          name: build_<< matrix.service >>
+          context: context-ecr-oidc-multiple-service
+          matrix:
+            parameters:
+              service: ["authors", "books", "dashboard"]
+
+      - render_task_def:
+          <<: *branch_filter
+          name: render_<< matrix.service >>
+          requires:
+            - build_image
+          context: context-ecr-oidc-multiple-service
+          matrix:
+            parameters:
+              service: ["authors", "books", "dashboard"]
+
+      - deploy_ecs:
+          <<: *branch_filter
+          name: deploy_<< matrix.service >>
+          requires:
+            - render_task_def
+          context: context-ecr-oidc-multiple-service
+          matrix:
+            parameters:
+              service: ["authors", "books", "dashboard"]

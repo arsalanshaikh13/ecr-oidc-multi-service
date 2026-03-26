@@ -3,5 +3,7 @@
 .terraform/
 .terraform.*
 terraform.*
-task-definition.json
+task-defini*.json
 host-based/**
+.github/**/**
+.gitlab-ci.yml
