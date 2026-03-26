@@ -4,6 +4,7 @@
 .terraform.*
 terraform.*
 task-defini*.json
-host-based/**
+<<<<<<< HEAD
 .github/**/**
 .gitlab*
+path-based/**

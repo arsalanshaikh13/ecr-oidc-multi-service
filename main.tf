@@ -337,6 +337,19 @@ resource "aws_route53_record" "root_alias" {
     zone_id                = aws_lb.app_alb.zone_id
     evaluate_target_health = true
   }
+}# 2. Subdomains (www, books, authors)
+resource "aws_route53_record" "subdomain_alias" {
+  for_each = toset(["www", "books", "authors"])
+  
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = "${each.key}.${var.domain_name}"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.app_alb.dns_name
+    zone_id                = aws_lb.app_alb.zone_id
+    evaluate_target_health = true
+  }
 }
 
 #---------------------------------------------
@@ -428,25 +441,12 @@ resource "aws_lb_listener_rule" "api_routing" {
     target_group_arn = aws_lb_target_group.app_tg[each.key].arn
   }
 
-  # condition {
-  #   host_header {
-  #     values = ["${each.key}.devsandbox.space"]
-  #   }
-  # }
-  # Condition 1: Match the specific domain (Optional but recommended)
   condition {
     host_header {
-      values = ["www.${var.domain_name}", var.domain_name]
+      values = ["${each.key}.${var.domain_name}"]
     }
   }
-
-  # Condition 2: Match the path
-  condition {
-    path_pattern {
-      # Matches exactly "/books" and anything under it like "/books/123"
-      values = ["/${each.key}", "/${each.key}/*", "/${each.key}*"] 
-    }
-  }
+  
 }
 #---------------------------------------------
 # 10. ECS Task Definition
@@ -537,10 +537,15 @@ resource "aws_ecs_task_definition" "app_task" {
     ENV_VAR          = local.env_suffix
     # Initial bootstrap env; CI/CD will handle the real ones later
     ENVIRONMENT_VARS = each.key == "dashboard" ? jsonencode([
-      { name = "BOOKS_SERVICE_URL", value = "https://${var.domain_name}/books" },
-      { name = "AUTHORS_SERVICE_URL", value = "https://${var.domain_name}/authors" }
+      { name = "BOOKS_SERVICE_URL", value = "https://books.${var.domain_name}" },
+      { name = "AUTHORS_SERVICE_URL", value = "https://authors.${var.domain_name}" }
     ]) : "[]"
   })
+  # lifecycle {
+  #   ignore_changes = [
+  #     container_definitions
+  #   ]
+  # }
 }
 #---------------------------------------------
 # 11. ECS Service
@@ -583,7 +588,7 @@ resource "aws_ecs_service" "app_service" {
 
   lifecycle {
     ignore_changes = [
-      # task_definition,
+      task_definition,
       desired_count
     ]
   }
