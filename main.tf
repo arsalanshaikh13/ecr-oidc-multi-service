@@ -217,26 +217,26 @@ resource "aws_security_group" "app_task_sg" {
   #   protocol                 = "tcp"
   #   security_groups = [aws_security_group.alb_sg.id]
   # }
-  ingress {
-    description = "node port access"
-    from_port                = 32768
-    to_port                  = 65535
-    protocol                 = "tcp"
-    security_groups = [aws_security_group.alb_sg.id]
-  }
+  # ingress {
+  #   description = "node port access"
+  #   from_port                = 32768
+  #   to_port                  = 65535
+  #   protocol                 = "tcp"
+  #   security_groups = [aws_security_group.alb_sg.id]
+  # }
 
   # # Dynamically creates ingress rules for 3200, 3300, and 3400
-  # dynamic "ingress" {
-  #   for_each = local.services
-  #   content {
-  #     description     = "Access for ${ingress.key} from ALB"
-  #     from_port       = ingress.value.port
-  #     to_port         = ingress.value.port
-  #     protocol        = "tcp"
-  #     # Only allow traffic that comes through the Load Balancer
-  #     security_groups = [aws_security_group.alb_sg.id] 
-  #   }
-  # }
+  dynamic "ingress" {
+    for_each = local.services
+    content {
+      description     = "Access for ${ingress.key} from ALB"
+      from_port       = ingress.value.port
+      to_port         = ingress.value.port
+      protocol        = "tcp"
+      # Only allow traffic that comes through the Load Balancer
+      security_groups = [aws_security_group.alb_sg.id] 
+    }
+  }
 
   egress {
     from_port   = 0
@@ -285,24 +285,24 @@ resource "aws_security_group" "ecs_node_sg" {
   # }
 
 # Dynamically creates ingress rules for 3200, 3300, and 3400
-  # dynamic "ingress" {
-  #   for_each = local.services
-  #   content {
-  #     description     = "Access for ${ingress.key} from ALB"
-  #     from_port       = ingress.value.port
-  #     to_port         = ingress.value.port
-  #     protocol        = "tcp"
-  #     # Only allow traffic that comes through the Load Balancer
-  #     security_groups = [aws_security_group.alb_sg.id] 
-  #   }
-  # }
-  ingress {
-    description = "node port access"
-    from_port                = 32768
-    to_port                  = 65535
-    protocol                 = "tcp"
-    security_groups = [aws_security_group.alb_sg.id]
+  dynamic "ingress" {
+    for_each = local.services
+    content {
+      description     = "Access for ${ingress.key} from ALB"
+      from_port       = ingress.value.port
+      to_port         = ingress.value.port
+      protocol        = "tcp"
+      # Only allow traffic that comes through the Load Balancer
+      security_groups = [aws_security_group.alb_sg.id] 
+    }
   }
+  # ingress {
+  #   description = "node port access"
+  #   from_port                = 32768
+  #   to_port                  = 65535
+  #   protocol                 = "tcp"
+  #   security_groups = [aws_security_group.alb_sg.id]
+  # }
 
   egress {
     from_port   = 0
@@ -632,7 +632,8 @@ resource "aws_ecs_task_definition" "app_task" {
   for_each         = local.services
   family                   = "lirw-task-${each.key}"
   # network_mode             = "awsvpc"
-  network_mode             = "bridge"
+  # network_mode             = "bridge"
+  network_mode             = "host"
   requires_compatibilities = ["EC2"]
   cpu                      = var.app_cpu
   memory                   = var.app_memory
@@ -654,6 +655,13 @@ resource "aws_ecs_task_definition" "app_task" {
       { name = "AUTHORS_SERVICE_URL", value = "https://${var.domain_name}/authors" }
     ]) : "[]"
   })
+
+    lifecycle {
+    ignore_changes = [
+      container_definitions
+    ]
+  }
+
 }
 #---------------------------------------------
 # 11. ECS Service
@@ -726,12 +734,6 @@ resource "aws_ecs_service" "app_service" {
     weight            = 100
   }
 
-  # only needed for awsvpc network
-  # network_configuration {
-  #   subnets          = [aws_subnet.pri_sub_3a.id, aws_subnet.pri_sub_4b.id] 
-  #   security_groups  = [aws_security_group.app_task_sg.id]
-  #   assign_public_ip = false 
-  # }
 
   health_check_grace_period_seconds = 60
 
